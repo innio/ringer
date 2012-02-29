@@ -1,4 +1,4 @@
-#require 'ringer/version'
+require 'ringer/version'
 require 'savon'
 
 module Ringer
