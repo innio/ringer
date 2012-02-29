@@ -1,4 +1,4 @@
-require 'ringer/version'
+#require 'ringer/version'
 require 'savon'
 
 module Ringer
@@ -18,24 +18,37 @@ module Ringer
       {:method => 'ping',
        :namespace => 'inputType',
        :fields => ['id', 'PorthosInternalReference', 'SIMNo', 'MSISDN', 'IMEI', 'SIMNumber', 'IP']
-      }
+      },
+      {:method => 'single_suspend_sim',
+       :namespace => 'inputType',
+       :fields => ['id', 'PorthosInternalReference', 'SIMNo', 'MSISDN', 'IMEI', 'ReuseForChangeSIM']
+      },
+      {:method => 'single_restore_sim',
+       :namespace => 'inputType',
+       :fields => ['id', 'PorthosInternalReference', 'SIMNo', 'MSISDN', 'IMEI']
+      },
     ]
 
     CONFIG.each do |block|
       # Dynamically inject methods as defined in the config.
       define_method(block[:method].to_sym) do |*args|
         method = block[:method]
-        fields = block[:fields]
-        namespace = block[:namespace]
+        fields = block[:fields] || []
+        namespace = block[:namespace] || nil
 
         # Remove unknown properties that are going to get in the way
-        data = args[0].delete_if {|key, value| !fields.include?(key)}
+        data = nil
+        data = args[0].delete_if {|key, value| !fields.include?(key)} unless args.empty?
 
         # Insert a suffeciently unique transaction ID.
-        data["TransactionId"] = transaction_id unless data.has_key?("TransactionId")
+        data["TransactionId"] = transaction_id unless (data.nil? or data.has_key?("TransactionId"))
 
+        request = nil
+        if !namespace.nil?
+          request = {namespace => data}
+        end
         # Make the call
-        return request(method, {namespace => data})
+        return request(method, request)
       end
     end
 
@@ -43,12 +56,31 @@ module Ringer
     # @param {String} username  Login name
     # @param {String} password Password
     # @param {Number} partner_id Partner ID number
-    def initialize(username, password, partner_id)
+    # @param {Boolean} auto_auth Authenticate automatically (true by default)
+    def initialize(username, password, partner_id, auto_auth=true)
       @username = username
       @password = password
       @partner_id = partner_id
+      @session = nil
 
       @client = Savon::Client.new("https://www.wyless.net:9443/PorthosAPI/PorthosWSF2.asmx?WSDL")
+
+      if auto_auth && !authenticate
+        raise 'Unable to authenticate'
+      end
+    end
+
+    # Authenticate with the server and store the session key.
+    # @return [Boolean] Sucess / Failure.
+    def authenticate
+      response = request('authenticate', nil)
+      # A failure to authenticate returns a nil response.
+      if response.nil? || response.empty?
+        return false
+      else
+        @session = response
+        return true
+      end
     end
 
     # Send a request to the SOAP endpoint.
@@ -59,7 +91,7 @@ module Ringer
     def request(method, data)
       response = @client.request(method.to_sym) do
         soap.header = header
-        soap.body = data
+        soap.body = data unless data.nil?
       end
       return response["#{method}_response".to_sym]["#{method}_result".to_sym]
     end
@@ -68,15 +100,25 @@ module Ringer
     private
 
     # The header information needed to for the request.
+    # Use the session key if one exists, otherwise use the username and password.
     # @return [Hash{String => Hash{String => String}}] The connection details.
     def header
-      {
-        'wsdl:Credential' => {
-          'wsdl:Login' => @username,
-          'wsdl:Password' => @password,
-          'wsdl:PartnerId' => @partner_id
+      if @session.nil?
+        {
+          'wsdl:Credential' => {
+            'wsdl:Login' => @username,
+            'wsdl:Password' => @password,
+            'wsdl:PartnerId' => @partner_id
+          }
         }
-      }
+      else
+        {
+          'wsdl:Credential' => {
+            'wsdl:SessionKey' => @session,
+            'wsdl:PartnerId' => @partner_id
+          }
+        }
+      end
     end
 
     # Unique transaction id.
