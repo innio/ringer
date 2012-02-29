@@ -23,7 +23,7 @@ class RingerTest < ActiveSupport::TestCase
   end
 
   test "auth fail" do
-    r = Ringer::Wyless.new(@user, @password, 123)
+    r = Ringer::Wyless.new(@user, @password, 123, false)
     assert !r.authenticate
   end
 
